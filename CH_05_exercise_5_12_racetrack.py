@@ -1,10 +1,18 @@
 '''
 #######################################################################
 # Copyright (C)                                                       #
-# 2018 Hans Weytjens ()                                               #
-# Permission given to modify the code as long as you keep this        #
-# declaration at the top                                              #
+# 2018 Hans Weytjens                                                  #
+# Permission given to modify the code as long as you                  #
+# mention the source clearly                                          #
 #######################################################################
+
+Running this program for racetrack 1 can take a long time since episodes
+tend to get very long: the relatively narrow road leads to frequently
+getting off-track. By default, the car gets placed on the starting
+line again and the episode continues. If, however, you set
+OFF_TRACK_STOP = True, then epsiodes will stop at the moment the
+car gets off-track and the reward will be set a punitively high
+-1000
 '''
 
 
@@ -102,7 +110,7 @@ def cross_finishline(path, finish_line):
             return True, path_till_finish
     return False, path
 
-def out_of_bound(path, racetrack, height, width):
+def offtrack(path, racetrack, height, width):
     for position in path:
         if position[0]<0 or position[0]> (height - 1) or position[1]<0 or position[1] > (width-1):
             return True
@@ -132,7 +140,8 @@ def exec_table_policy(position, speed, policy = None):
         else:
             return "error"
 
-def drive(position, speed, racetrack, height, width, start_line, finish_line, noise = False, policy = [], plot = False):
+def drive(position, speed, racetrack, height, width, start_line, finish_line, noise = False, 
+          policy = [], plot = False, offtrack_stop = False):
     episode = []
     finish = False
     while finish == False:
@@ -156,13 +165,16 @@ def drive(position, speed, racetrack, height, width, start_line, finish_line, no
         path = compute_projected_path(position,new_speed)
         crossed_finish, path = cross_finishline(path, finish_line)
         r = -1
-        if crossed_finish and not out_of_bound(path, racetrack, height, width):
+        if crossed_finish and not offtrack(path, racetrack, height, width):
             finish = True
         else:
-            if out_of_bound(path, racetrack, height, width):
+            if offtrack(path, racetrack, height, width):
                 position = start_line[np.random.randint(0,len(start_line))]
                 speed = [0,0]
-                r = -len(start_line)          # to avoid going out-of-bound as strategy to improve starting position
+                r = -len(start_line)          # to avoid going off-track as strategy to improve starting position
+                if offtrack_stop:             # when car goes off-track, episode is over, and reward is extremely low
+                    r = -1000
+                    finish = True
             else:
                 position = [position[0]+new_speed[0], position[1]+new_speed[1]]
                 speed = new_speed
@@ -181,7 +193,7 @@ def exploring_start(racetrack, height, width):
             return init_pos, init_speed
     
 def monte_carlo_off_policy(racetrack, height, width, start_line, finish_line, gamma,
-                           episodes, expl_start, start_position = None, noise=False):
+                           episodes, expl_start, start_position = None, noise=False, offtrack_stop=False):
     # racetrack 32 x 17, speed 5x5, actions 9
     # -20 in Q_state_action_value since rewards are negative
     Qsa_value = np.random.rand(height,width,MAX_SPEED+1,MAX_SPEED+1,nr_actions)-20
@@ -196,7 +208,7 @@ def monte_carlo_off_policy(racetrack, height, width, start_line, finish_line, ga
             position, speed = exploring_start(racetrack, height, width)
         else:
             position, speed = start_position,[0,0]
-        episode = drive(position, speed, racetrack, height, width, start_line, finish_line, noise)
+        episode = drive(position, speed, racetrack, height, width, start_line, finish_line, noise, [], False, offtrack_stop)
         G = 0
         W = 1
         for step in range(len(episode), 0, -1):
@@ -217,13 +229,13 @@ def monte_carlo_off_policy(racetrack, height, width, start_line, finish_line, ga
             W = W / (1/nr_actions)
         episode_count += 1
         #print(episode_count)
-        if episode_count % 1000 == 0: print(episode_count,"/",episodes," episodes")  
+        if episode_count % 10000 == 0: print(episode_count,"/",episodes," episodes")  
     return Qsa_value, pi_policy
         
 
 def monte_carlo_on_policy(racetrack, height, width, start_line, finish_line, gamma,
-                          epsilon, episodes, expl_start, start_position = None, noise=False):
-    # racetrack 32 x 17, speed 5x5, actions 9
+                          epsilon, episodes, expl_start, start_position = None, noise=False, offtrack_stop=False):
+    # racetrack height x width, speed 5x5, actions 9
     # -20 in Q_state_action_value since rewards are negative
     Qsa_value = np.random.rand(height,width,MAX_SPEED+1,MAX_SPEED+1,nr_actions)-20
     Countssa = np.ones((height,width,MAX_SPEED+1,MAX_SPEED+1,nr_actions))
@@ -236,7 +248,7 @@ def monte_carlo_on_policy(racetrack, height, width, start_line, finish_line, gam
             position, speed = exploring_start(racetrack, height, width)
         else:
             position, speed = start_position,[0,0]
-        episode = drive(position, speed, racetrack, height, width, start_line, finish_line, noise, pi_policy)
+        episode = drive(position, speed, racetrack, height, width, start_line, finish_line, noise, pi_policy, False, offtrack_stop)
         G = 0
         visited = []
         for step in range(len(episode), 0, -1):
@@ -256,45 +268,35 @@ def monte_carlo_on_policy(racetrack, height, width, start_line, finish_line, gam
                 pi_policy[position[0], position[1], speed[0], speed[1], A] = 1 - epsilon + epsilon/nr_actions
         visited.append([position, speed, action])
         episode_count += 1
-        if episode_count % 1000 == 0: print(episode_count,"/",episodes," episodes")    
+        if episode_count % 10000 == 0: print(episode_count,"/",episodes," episodes")    
     # make policy deterministic
     pi_policy = np.argmax(Qsa_value, axis = 4)
     return Qsa_value, pi_policy
         
 
         
-def start_simulation(racetrack_nr, gamma, on_policy, epsilon, expl_start, start_position, episodes, filename, noise):
+def start_simulation(racetrack_nr, gamma, on_policy, epsilon, expl_start, start_position, episodes, filename, noise, offtrack_stop = False):
     racetrack, height, width, start_line, finish_line = read_racetrack(racetrack_nr)
     if on_policy:
-        Qsa_value, pi_policy = monte_carlo_on_policy(racetrack, height, width, start_line, finish_line, gamma,
-                                                     epsilon, episodes, expl_start, start_position, noise)
+        _, pi_policy = monte_carlo_on_policy(racetrack, height, width, start_line, finish_line, gamma,
+                                                     epsilon, episodes, expl_start, start_position, noise, offtrack_stop)
     else:
-        Qsa_value, pi_policy = monte_carlo_off_policy(racetrack, height, width, start_line, finish_line, gamma,
-                                                      episodes, expl_start, start_position, noise)
-    with open(PATH+filename+"_Pi_policy.pkl", 'wb') as f:
-        pickle.dump(pi_policy, f, pickle.HIGHEST_PROTOCOL)
-    with open(PATH+filename+"_Qsa_value.pkl", 'wb') as f:
-        pickle.dump(Qsa_value, f, pickle.HIGHEST_PROTOCOL) 
-    print_solution(filename, racetrack, racetrack_nr, episodes, on_policy, expl_start, start_position, height, width, start_line, finish_line)  
+        _, pi_policy = monte_carlo_off_policy(racetrack, height, width, start_line, finish_line, gamma,
+                                                      episodes, expl_start, start_position, noise, offtrack_stop)
+    print_solution(filename, pi_policy, racetrack, racetrack_nr, episodes, on_policy, expl_start, start_position, height, width, 
+                   start_line, finish_line, offtrack_stop)  
         
 
-def print_solution(filename, racetrack, racetrack_nr, episodes, on_policy, expl_start, start_position, height, width, start_line, finish_line):
+def print_solution(filename, pi_target_policy, racetrack, racetrack_nr, episodes, on_policy, expl_start, start_position, height, width, 
+                   start_line, finish_line, offtrack_stop):
     from matplotlib import pyplot as plt
     from copy import deepcopy    
-    with open(PATH+filename+"_Pi_policy.pkl", 'rb') as f:
-        pi_target_policy = pickle.load(f)
     if racetrack_nr == 1:
         fig, axs = plt.subplots(1, len(start_line), figsize=(7, 7))
     else:
         fig, axs = plt.subplots(3, int((len(start_line)+1.5)/3), figsize=(5, 5))
         axs[2, int((len(start_line)+1.5)/3)-1].matshow([[0,0],[0,0]])                 # to make sure the last plot is filled in case of odd number of starting positions
-    print_on_off = ", off_policy, "
-    if on_policy: print_on_off = ", on_policy, "
-    if expl_start:
-        print_start = "with exploring starts"
-    else:
-        print_start = "starting from: "+ str(start_position)
-    title = str(episodes)+" episodes"+print_on_off+print_start
+    title = gen_title(episodes, start_position, on_policy, expl_start, offtrack_stop)
     _ = fig.suptitle(title, fontsize="x-large")
     counter = 0
     for start_pos in start_line:
@@ -327,6 +329,20 @@ def print_solution(filename, racetrack, racetrack_nr, episodes, on_policy, expl_
     plt.show()
 
 
+def gen_title(episodes, start_position, on_policy, expl_start, offtrack_stop):
+    print_on_off = ", off_policy, "
+    if on_policy: print_on_off = ", on_policy, "
+    if expl_start:
+        print_start = "with exploring starts"
+    else:
+        print_start = "starting from: "+ str(start_position)
+    if offtrack_stop:
+        print_of = ", off-track ends episode"
+    else:
+        print_of = ", off-track means back to starting line"
+    return str(episodes)+" episodes"+print_on_off+print_start+print_of
+
+
 def fig_1():
     FILE_NAME = "Ex_5_12_racetrack_fig_1"
     RACETRACK_NR = 1                 # 1 or 2
@@ -335,9 +351,10 @@ def fig_1():
     EPSILON = None                  # only relevant for ON_POLICY = True
     EXPL_START = True
     START_POSITION = None         # None if EXPL_START = True
-    EPISODES = 20000
+    EPISODES = 1000
     NOISE = True                  # if True, probability 0.1 of no velocity increment
-    start_simulation(RACETRACK_NR, GAMMA, ON_POLICY, EPSILON, EXPL_START, START_POSITION, EPISODES, FILE_NAME, NOISE)
+    OFF_TRACK_STOP = False         # if True, then episode stops when car gets offtrack, instead of going back to start line
+    start_simulation(RACETRACK_NR, GAMMA, ON_POLICY, EPSILON, EXPL_START, START_POSITION, EPISODES, FILE_NAME, NOISE, OFF_TRACK_STOP)
 
 
 def fig_2():
@@ -348,35 +365,52 @@ def fig_2():
     EPSILON = .03                  # only relevant for ON_POLICY = True
     EXPL_START = False
     START_POSITION = [0,3]         # None if EXPL_START = True
-    EPISODES = 20000
+    EPISODES = 50000
     NOISE = False                  # if True, probability 0.1 of no velocity increment
-    start_simulation(RACETRACK_NR, GAMMA, ON_POLICY, EPSILON, EXPL_START, START_POSITION, EPISODES, FILE_NAME, NOISE)
+    OFF_TRACK_STOP = False         # if True, then episode stops when car gets offtrack, instead of going back to start line
+    start_simulation(RACETRACK_NR, GAMMA, ON_POLICY, EPSILON, EXPL_START, START_POSITION, EPISODES, FILE_NAME, NOISE, OFF_TRACK_STOP)
 
 
 def fig_3():
     FILE_NAME = "Ex_5_12_racetrack_fig_3"
-    RACETRACK_NR = 2                 # 1 or 2
+    RACETRACK_NR = 2               # 1 or 2
     GAMMA = 0.9
     ON_POLICY = True
     EPSILON = .03                  # only relevant for ON_POLICY = True
     EXPL_START = True
-    START_POSITION = None         # None if EXPL_START = True
-    EPISODES = 30000
+    START_POSITION = None          # None if EXPL_START = True
+    EPISODES = 50000
     NOISE = False                  # if True, probability 0.1 of no velocity increment
-    start_simulation(RACETRACK_NR, GAMMA, ON_POLICY, EPSILON, EXPL_START, START_POSITION, EPISODES, FILE_NAME, NOISE)
+    OFF_TRACK_STOP = False         # if True, then episode stops when car gets offtrack, instead of going back to start line
+    start_simulation(RACETRACK_NR, GAMMA, ON_POLICY, EPSILON, EXPL_START, START_POSITION, EPISODES, FILE_NAME, NOISE, OFF_TRACK_STOP)
 
 
 def fig_4():    
     FILE_NAME = "Ex_5_12_racetrack_fig_4"
-    RACETRACK_NR = 2                 # 1 or 2
+    RACETRACK_NR = 2               # 1 or 2
     GAMMA = 0.9
     ON_POLICY = True
-    EPSILON = .03                   # only relevant for ON_POLICY = True
+    EPSILON = .03                  # only relevant for ON_POLICY = True
     EXPL_START = False
-    START_POSITION = [0,16]         # None if EXPL_START = True
-    EPISODES = 30000
-    NOISE = True                  # if True, probability 0.1 of no velocity increment
-    start_simulation(RACETRACK_NR, GAMMA, ON_POLICY, EPSILON, EXPL_START, START_POSITION, EPISODES, FILE_NAME, NOISE)
+    START_POSITION = [0,16]        # None if EXPL_START = True
+    EPISODES = 1000
+    NOISE = True                   # if True, probability 0.1 of no velocity increment
+    OFF_TRACK_STOP = False         # if True, then episode stops when car gets offtrack, instead of going back to start line
+    start_simulation(RACETRACK_NR, GAMMA, ON_POLICY, EPSILON, EXPL_START, START_POSITION, EPISODES, FILE_NAME, NOISE, OFF_TRACK_STOP)
+    
+    
+def fig_5():    
+    FILE_NAME = "Ex_5_12_racetrack_fig_5"
+    RACETRACK_NR = 1               # 1 or 2
+    GAMMA = 0.9
+    ON_POLICY = False
+    EPSILON = .03                  # only relevant for ON_POLICY = True
+    EXPL_START = True 
+    START_POSITION = [0,3]         # None if EXPL_START = True
+    EPISODES = 15000000
+    NOISE = True                   # if True, probability 0.1 of no velocity increment
+    OFF_TRACK_STOP = True          # if True, then episode stops when car gets offtrack, instead of going back to start line
+    start_simulation(RACETRACK_NR, GAMMA, ON_POLICY, EPSILON, EXPL_START, START_POSITION, EPISODES, FILE_NAME, NOISE, OFF_TRACK_STOP)
 
 
 if __name__ == '__main__':
@@ -388,6 +422,7 @@ if __name__ == '__main__':
     fig_2()
     fig_3()
     fig_4()
+    fig_5()
 
 
 
