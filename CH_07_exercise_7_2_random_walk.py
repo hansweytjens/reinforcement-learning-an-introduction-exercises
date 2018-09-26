@@ -148,7 +148,6 @@ def compute_state_value(method, n):
     for i in range(episodes[-1] + 1):
         if i in episodes:
             plt.plot(current_values, label=str(i) + ' episodes')
-        print(current_values[1:6])
         if method == "TD":
             current_values = n_step_td(current_values, n=n)
         elif method == "TD_error":
@@ -209,14 +208,14 @@ def exercise_7_2():
     compute_state_value(method = "TD_error", n = 3)
     
     plt.tight_layout()
-    plt.savefig(PATH+'exercise_7_2_a.png')
+    plt.savefig(PATH+'CH_07_exercise_7_2_a.png')
 
     plt.figure(figsize=(20, 20))
     #plt.subplot(3, 1, 3)
     rms_error()
     plt.tight_layout()
     
-    plt.savefig(PATH+'exercise_7_2_b.png')
+    plt.savefig(PATH+'CH_07_exercise_7_2_b.png')
     #plt.close()
 
 
